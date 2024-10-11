@@ -1,0 +1,314 @@
+trigger:
+  branches:
+    include:
+    - main
+
+variables:
+  imageName: jmuachifi/my-docker-webapp
+  dockerHubServiceConnection: azure-service-connection-docker
+  azureSubscription: azure-service-connection-demo
+  appServiceNameDev: my-app-service-dev
+  appServiceNameStaging: my-app-service-staging
+  appServiceNameProd: my-app-service-prod
+
+stages:
+- stage: Build
+  displayName: Build and Publish Stage
+  jobs:
+  - job: CodeCheck
+    displayName: Run Code Linting and Formatting Checks
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - task: Bash@3
+      displayName: Run HTML Code Check
+      inputs:
+        targetType: inline
+        script: |
+          if grep -iq '<html>' wdata/index.html; then
+            echo "HTML structure check passed"
+          else
+            echo "HTML structure check failed" && exit 1
+          fi
+    - script: echo "Skipping next steps because HTML check failed"
+      condition: failed()
+    - script: 'echo "HTML check passed, proceeding with further steps"'
+      condition: succeeded()
+
+  - job: BuildPublish
+
+
+    displayName: 'Build, Scan, and Publish Docker Image to Docker Hub'
+    dependsOn:
+    - CodeCheck
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - task: Docker@2
+      displayName: Build Docker Image
+      inputs:
+        command: build
+        dockerfile: Dockerfile
+        tags: |
+          $(Build.BuildId)
+    - task: Bash@3
+      displayName: Run Trivy Security Scan on Docker Image
+      inputs:
+        targetType: inline
+        script: >
+          docker pull aquasec/trivy:canary
+
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:canary image --exit-code 1 --ignore-unfixed --severity CRITICAL,HIGH $(imageName):$(Build.BuildId)
+    - task: Docker@2
+      displayName: Push Docker Image to Docker Hub
+      inputs:
+        command: push
+        tags: |
+          $(Build.BuildId)
+      env:
+        DOCKER_REGISTRY_SERVICE_CONNECTION: $(dockerHubServiceConnection)
+
+- stage: Deploy_Dev
+  displayName: Deploy to Development
+  dependsOn: Build
+  jobs:
+  - deployment: Dev
+    environment: dev
+    pool:
+      vmImage: ubuntu-latest
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureWebAppContainer@1
+            displayName: Deploy to Development App Service
+            inputs:
+              azureSubscription: $(azureSubscription)
+              appName: $(appServiceNameDev)
+              imageName: '$(imageName):$(Build.BuildId)'
+
+- stage: Deploy_Staging
+  displayName: Deploy to Staging
+  dependsOn: Deploy_Dev
+  condition: succeeded()
+  jobs:
+  - deployment: Staging
+    environment: staging
+    pool:
+      vmImage: ubuntu-latest
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureWebAppContainer@1
+            displayName: Deploy to Staging App Service
+            inputs:
+              azureSubscription: $(azureSubscription)
+              appName: $(appServiceNameStaging)
+              imageName: '$(imageName):$(Build.BuildId)'
+
+- stage: Deploy_Prod
+  displayName: Deploy to Production
+  dependsOn: Deploy_Staging
+  condition: succeeded()
+  jobs:
+  - deployment: Prod
+    environment: production
+    pool:
+      vmImage: ubuntu-latest
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureWebAppContainer@1
+            displayName: Deploy to Production App Service
+            inputs:
+              azureSubscription: $(azureSubscription)
+              appName: $(appServiceNameProd)
+              imageName: '$(imageName):$(Build.BuildId)'
+-------------------------------------------------------------
+trigger:
+  branches:
+    include:
+    - main
+variables:
+  imageName: jmuachifi/my-docker-webapp
+  dockerHubServiceConnection: azure-service-connection-docker
+  azureSubscription: azure-service-connection-demo
+  appServiceNameDev: my-app-service-dev
+  appServiceNameStaging: my-app-service-staging
+  appServiceNameProd: my-app-service-prod
+stages:
+- stage: Build
+  displayName: Build and Publish Stage
+  jobs:
+  - job: BuildPublish
+    displayName: 'Build, Scan, and Publish Docker Image to Docker Hub'
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - task: Docker@2
+      displayName: Build Docker Image
+      inputs:
+        command: build
+        dockerfile: Dockerfile
+        tags: |
+          $(imageName):$(Build.BuildId)
+    - task: Bash@3
+      displayName: Run Trivy Security Scan on Docker Image
+      inputs:
+        targetType: inline
+        script: >
+          docker pull aquasec/trivy:canary docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:canary image --exit-code 1 --ignore-unfixed --severity CRITICAL,HIGH $(imageName):$(Build.BuildId)
+    - task: Docker@2
+      displayName: Push Docker Image to Docker Hub
+      inputs:
+        command: push
+        tags: |
+          $(imageName):$(Build.BuildId)
+      env:
+        DOCKER_REGISTRY_SERVICE_CONNECTION: $(dockerHubServiceConnection)
+- stage: Deploy_Dev
+  displayName: Deploy to Development
+  dependsOn: Build
+  jobs:
+  - deployment: Dev
+    environment: dev
+    pool:
+      vmImage: ubuntu-latest
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureWebAppContainer@1
+            displayName: Deploy to Development App Service
+            inputs:
+              azureSubscription: $(azureSubscription)
+              appName: $(appServiceNameDev)
+              imageName: '$(imageName):$(Build.BuildId)'
+- stage: Deploy_Staging
+  displayName: Deploy to Staging
+  dependsOn: Deploy_Dev
+  condition: succeeded()
+  jobs:
+  - deployment: Staging
+    environment: staging
+    pool:
+      vmImage: ubuntu-latest
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureWebAppContainer@1
+            displayName: Deploy to Staging App Service
+            inputs:
+              azureSubscription: $(azureSubscription)
+              appName: $(appServiceNameStaging)
+              imageName: '$(imageName):$(Build.BuildId)'
+- stage: Deploy_Prod
+  displayName: Deploy to Production
+  dependsOn: Deploy_Staging
+  condition: succeeded()
+  jobs:
+  - deployment: Prod
+    environment: production
+    pool:
+      vmImage: ubuntu-latest
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureWebAppContainer@1
+            displayName: Deploy to Production App Service
+            inputs:
+              azureSubscription: $(azureSubscription)
+              appName: $(appServiceNameProd)
+              imageName: '$(imageName):$(Build.BuildId)'
+---------------------------------------------------------------
+# azure-pipelines.yml
+trigger:
+  branches:
+    include:
+    - main
+
+variables:
+  imageName: 'jmuachifi/my-docker-webapp'
+
+stages:
+- stage: Build
+  displayName: Build and Publish Stage
+  jobs:
+  - job: BuildPublish
+    displayName: 'Build and Push Docker Image to Docker Hub'
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - task: Docker@2
+      displayName: Build Docker Image
+      inputs:
+        command: build
+        dockerfile: Dockerfile
+        tags: |
+          $(imageName):$(Build.BuildId)
+
+    - task: Docker@2
+      displayName: Push Docker Image to Docker Hub
+      inputs:
+        command: push
+        repository: '$(imageName)' # Specify the repository here
+        tags: |
+          $(Build.BuildId)  # Use the Build ID as the tag
+      env:
+        DOCKER_REGISTRY_SERVICE_CONNECTION: $(dockerHubServiceConnection)
+
+    - task: Bash@3
+      displayName: Run Trivy Security Scan on Docker Image
+      inputs:
+        targetType: inline
+        script: |
+          docker pull aquasec/trivy:canary
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:canary image --exit-code 1 --ignore-unfixed --severity CRITICAL,HIGH $(imageName):$(Build.BuildId)
+
+-------------------------------------------------------------------------------
+trigger:
+  branches:
+    include:
+      - main
+
+variables:
+  imageRepository: 'webappdemo'
+  containerRegistry: 'cregistrywebappdemo.azurecr.io'
+  dockerfilePath: '**/Dockerfile'
+  tag: |
+    $(Build.BuildId)
+    latest
+  vmImageName: 'ubuntu-latest'
+  ACR_USERNAME: 'CRegistryWebappDemo'  # Set this as a secret variable in Azure DevOps
+  ACR_PASSWORD: '$(ACR_PASSWORD)'  # Password should be stored as a secret
+
+pool:
+  vmImage: $(vmImageName)
+
+stages:
+  - stage: Build
+    displayName: Build and Push Stage
+    jobs:
+      - job: Build
+        displayName: Build and Push Docker Image
+        steps:
+          - task: Docker@2
+            inputs:
+              containerRegistry: 'cregistrywebappdemo.azurecr.io'
+              repository: $(imageRepository)
+              command: login
+              username: $(ACR_USERNAME)  # Use the username variable
+              password: $(ACR_PASSWORD)    # Use the password variable
+
+          - task: Docker@2
+            inputs:
+              containerRegistry: 'cregistrywebappdemo.azurecr.io'
+              repository: $(imageRepository)
+              command: buildAndPush
+              Dockerfile: $(dockerfilePath)
+              tags: |
+                $(tag)

@@ -1,0 +1,17 @@
+# azure-pipeline.yml
+
+trigger:
+- main
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+- task: AzureWebAppContainer@1
+  inputs:
+    azureSubscription: 'azure-service-connection-demo'
+    appName: 'app-svc-demo'
+    deployToSlotOrASE: true
+    resourceGroupName: 'general_demo'
+    slotName: 'production'
+    containers: 'cregistrywebappdemo.azurecr.io/webappdemo:latest'
